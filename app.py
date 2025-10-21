@@ -9,18 +9,47 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 import yfinance as yf
+import io, requests
 
 
-# -------------------------------
-# Helpers
-# -------------------------------
-def load_report(file_path: str) -> pd.DataFrame:
-    if not os.path.exists(file_path):
-        return pd.DataFrame(columns=["Symbol", "DATE", "RESISTANCE", "SUPPORT", "DIRECTION"])
-    df = pd.read_csv(file_path, index_col=0)
-    df.reset_index(inplace=True)
-    df.rename(columns={df.columns[0]: "Symbol"}, inplace=True)
-    return df
+
+@st.cache_data(ttl=300)
+def load_report_by_key(key: str) -> pd.DataFrame:
+
+    key = key.lower()
+    drive_cfg = st.secrets.get("drive", None)
+    local_map = {
+        "all": "rectangle_all.csv",
+        "breakouts": "rectangle_breakouts.csv",
+        "breakdowns": "rectangle_breakdowns.csv",
+        "alerts": "rectangle_alerts.csv",
+    }
+
+    # Try Google Drive (public link)
+    if drive_cfg and key in drive_cfg and "base" in drive_cfg:
+        file_id = drive_cfg[key]
+        base = drive_cfg["base"].rstrip("?&")
+        url = f"{base}={file_id}&export=download" if "uc?id" not in base else f"{base}{file_id}&export=download"
+        try:
+            r = requests.get(url, timeout=20)
+            r.raise_for_status()
+            return pd.read_csv(io.BytesIO(r.content))
+        except Exception as e:
+            st.warning(f"Drive load failed for '{key}' ({e}). Falling back to local file.")
+
+    # Fallback: local /alert folder in repo
+    local_name = local_map.get(key)
+    if local_name:
+        local_path = os.path.join("alert", local_name)
+        if os.path.exists(local_path):
+            try:
+                return pd.read_csv(local_path, index_col=None)
+            except Exception as e:
+                st.error(f"Local CSV read failed for {local_name}: {e}")
+                return pd.DataFrame()
+
+    st.error(f"No source found for report key '{key}'. Check secrets or local files.")
+    return pd.DataFrame()
 
 
 def plot_symbol_with_sr(
@@ -164,17 +193,13 @@ def main() -> None:
         help="Choose which precomputed report to view."
     )
     report_map = {
-        "All": "rectangle_all.csv",
-        "Breakouts": "rectangle_breakouts.csv",
-        "Breakdowns": "rectangle_breakdowns.csv",
-        "Alerts": "rectangle_alerts.csv",
-    }
-    # Adjust this path to your CSV location
-    report_path = os.path.join(
-        "/Users/aviandanpal/Desktop/pythonProject1/alert",
-        report_map[report_type]
-    )
-    df_report = load_report(report_path)
+    "All": "all",
+    "Breakouts": "breakouts",
+    "Breakdowns": "breakdowns",
+    "Alerts": "alerts",
+}
+    report_key = report_map[report_type]
+    df_report = load_report_by_key(report_key)
 
     if df_report.empty:
         st.warning("No report data found. Ensure the CSV files exist at the configured path.")
