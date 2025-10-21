@@ -15,9 +15,15 @@ import io, requests
 
 @st.cache_data(ttl=300)
 def load_report_by_key(key: str) -> pd.DataFrame:
-
+    """
+    Load a report by logical key: 'all' | 'breakouts' | 'breakdowns' | 'alerts'.
+    1) If Streamlit secrets contain Drive file IDs, fetch from Google Drive.
+    2) Else, fallback to local /alert/*.csv in the repo.
+    Normalizes headers and ensures a 'Symbol' column when possible.
+    """
     key = key.lower()
     drive_cfg = st.secrets.get("drive", None)
+
     local_map = {
         "all": "rectangle_all.csv",
         "breakouts": "rectangle_breakouts.csv",
@@ -25,25 +31,73 @@ def load_report_by_key(key: str) -> pd.DataFrame:
         "alerts": "rectangle_alerts.csv",
     }
 
-    # Try Google Drive (public link)
+    def _normalize(df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty:
+            return pd.DataFrame()
+        # strip BOM/whitespace and lower for matching
+        new_cols = []
+        for c in df.columns:
+            if isinstance(c, str):
+                c2 = c.encode("utf-8").decode("utf-8-sig").strip()
+            else:
+                c2 = c
+            new_cols.append(c2)
+        df.columns = new_cols
+
+        # If there is an obvious index column, drop it
+        for cand in ["index", "Unnamed: 0", "", None]:
+            if cand in df.columns:
+                # only drop if it looks like a simple 0..N integer index
+                if pd.api.types.is_integer_dtype(df[cand]) or df[cand].astype(str).str.match(r"^\d+$").all():
+                    df = df.drop(columns=[cand], errors="ignore")
+
+        # Unify typical variants to 'Symbol'
+        colmap = {c: c for c in df.columns}
+        lower = {c.lower(): c for c in df.columns if isinstance(c, str)}
+        for possible in ["symbol", "ticker", "scrip", "stock", "nse_symbol"]:
+            if possible in lower:
+                colmap[lower[possible]] = "Symbol"
+                break
+
+        df = df.rename(columns=colmap)
+
+        # If still no 'Symbol' but the first column looks like symbols, use it
+        if "Symbol" not in df.columns and len(df.columns) > 0:
+            first = df.columns[0]
+            # heuristic: short strings, letters/numbers/.- only
+            sample = df[first].astype(str).head(10)
+            if sample.str.match(r"^[A-Za-z0-9\.\-\_]{2,20}$").all():
+                df = df.rename(columns={first: "Symbol"})
+
+        # Coerce DATE to datetime if present
+        if "DATE" in df.columns:
+            df["DATE"] = pd.to_datetime(df["DATE"], errors="coerce")
+
+        return df
+
+    # Try Google Drive first
     if drive_cfg and key in drive_cfg and "base" in drive_cfg:
         file_id = drive_cfg[key]
-        base = drive_cfg["base"].rstrip("?&")
-        url = f"{base}={file_id}&export=download" if "uc?id" not in base else f"{base}{file_id}&export=download"
+        base = drive_cfg["base"].rstrip()
+        # Support both "https://drive.google.com/uc?id=" and "…/uc?id"
+        url = base if base.endswith("=") else (base + ("&id=" if "?" in base else "?id="))
+        url = f"{url}{file_id}&export=download" if "export=download" not in url else f"{url}{file_id}"
         try:
             r = requests.get(url, timeout=20)
             r.raise_for_status()
-            return pd.read_csv(io.BytesIO(r.content))
+            df = pd.read_csv(io.BytesIO(r.content))
+            return _normalize(df)
         except Exception as e:
             st.warning(f"Drive load failed for '{key}' ({e}). Falling back to local file.")
 
-    # Fallback: local /alert folder in repo
+    # Fallback: local /alert
     local_name = local_map.get(key)
     if local_name:
         local_path = os.path.join("alert", local_name)
         if os.path.exists(local_path):
             try:
-                return pd.read_csv(local_path, index_col=None)
+                df = pd.read_csv(local_path)
+                return _normalize(df)
             except Exception as e:
                 st.error(f"Local CSV read failed for {local_name}: {e}")
                 return pd.DataFrame()
