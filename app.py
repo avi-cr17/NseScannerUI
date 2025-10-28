@@ -347,12 +347,26 @@ def main() -> None:
     # Summary metrics
     st.markdown("### Summary Metrics")
     c1, c2, c3 = st.columns(3)
+    direction_col = (
+        filtered["DIRECTION"].fillna("")
+        if "DIRECTION" in filtered.columns
+        else pd.Series(dtype=str)
+    )
     with c1:
-        c1.metric("Breakouts", int((df_report["DIRECTION"].str.contains("BREAKOUT", case=False, na=False)).sum()))
+        c1.metric(
+            "Breakouts",
+            int(direction_col.str.contains("BREAKOUT", case=False, na=False).sum()),
+        )
     with c2:
-        c2.metric("Breakdowns", int((df_report["DIRECTION"].str.contains("BREAKDOWN", case=False, na=False)).sum()))
+        c2.metric(
+            "Breakdowns",
+            int(direction_col.str.contains("BREAKDOWN", case=False, na=False).sum()),
+        )
     with c3:
-        c3.metric("Alerts", int((df_report["DIRECTION"].str.contains("ALERT", case=False, na=False)).sum()))
+        c3.metric(
+            "Alerts",
+            int(direction_col.str.contains("ALERT", case=False, na=False).sum()),
+        )
 
     # Chart for selected symbol with S/R
     if st.session_state.symbol_filter != "All":
