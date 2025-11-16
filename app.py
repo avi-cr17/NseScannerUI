@@ -354,12 +354,18 @@ def main() -> None:
     # Summary metrics
     st.markdown("### Summary Metrics")
     c1, c2, c3 = st.columns(3)
+    # tie metrics to the same filters driving the table/chart so they react to date changes
+    def _count_direction(df: pd.DataFrame, keyword: str) -> int:
+        if "DIRECTION" not in df.columns or df.empty:
+            return 0
+        return int(df["DIRECTION"].str.contains(keyword, case=False, na=False).sum())
+
     with c1:
-        c1.metric("Breakouts", int((df_report["DIRECTION"].str.contains("BREAKOUT", case=False, na=False)).sum()))
+        c1.metric("Breakouts", _count_direction(filtered, "BREAKOUT"))
     with c2:
-        c2.metric("Breakdowns", int((df_report["DIRECTION"].str.contains("BREAKDOWN", case=False, na=False)).sum()))
+        c2.metric("Breakdowns", _count_direction(filtered, "BREAKDOWN"))
     with c3:
-        c3.metric("Alerts", int((df_report["DIRECTION"].str.contains("ALERT", case=False, na=False)).sum()))
+        c3.metric("Alerts", _count_direction(filtered, "ALERT"))
 
     # Chart for selected symbol with S/R
     if st.session_state.symbol_filter != "All":
