@@ -270,16 +270,8 @@ def main() -> None:
     if "symbol_filter" not in st.session_state:
         st.session_state.symbol_filter = "All"
 
-    # Sidebar filter dropdown (will be controlled by double-click)
-    symbols = sorted(df_report["Symbol"].dropna().unique().tolist())
-    selected_symbol = st.sidebar.selectbox(
-        "Filter by symbol",
-        ["All"] + symbols,
-        index=(["All"] + symbols).index(st.session_state.symbol_filter)
-        if st.session_state.symbol_filter in (["All"] + symbols) else 0,
-        key="symbol_filter",
-        help="Double-click a row in the table to set this."
-    )
+    # Reserve space so the symbol dropdown stays above the date selector
+    symbol_container = st.sidebar.container()
 
     # Date range filter
     min_date = df_report["DATE"].min().date() if not df_report.empty else datetime.date.today()
@@ -292,16 +284,31 @@ def main() -> None:
     )
     if not isinstance(date_range, tuple) or len(date_range) != 2:
         date_range = (min_date, max_date)
+    start_date, end_date = date_range
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    # Restrict available symbols by the selected date range
+    date_filtered = df_report[
+        (df_report["DATE"] >= pd.to_datetime(start_date)) &
+        (df_report["DATE"] <= pd.to_datetime(end_date))
+    ]
+    symbols = sorted(date_filtered["Symbol"].dropna().unique().tolist())
+    symbol_options = ["All"] + symbols
+    if st.session_state.symbol_filter not in symbol_options:
+        st.session_state.symbol_filter = "All"
+
+    selected_symbol = symbol_container.selectbox(
+        "Filter by symbol",
+        symbol_options,
+        key="symbol_filter",
+        help="Double-click a row in the table to set this."
+    )
 
     # Apply filters
-    filtered = df_report.copy()
+    filtered = date_filtered.copy()
     if selected_symbol != "All":
         filtered = filtered[filtered["Symbol"] == selected_symbol]
-    start_date, end_date = date_range
-    filtered = filtered[
-        (filtered["DATE"] >= pd.to_datetime(start_date)) &
-        (filtered["DATE"] <= pd.to_datetime(end_date))
-    ]
 
     st.subheader(f"{report_type} report results")
     st.write(f"Showing {len(filtered)} records out of {len(df_report)} after applying filters.")
@@ -337,7 +344,7 @@ def main() -> None:
             # double-click detected -> update symbol filter
             try:
                 sym = table_df.loc[row, "Symbol"]
-                if sym in (["All"] + symbols):
+                if sym in symbol_options:
                     st.session_state.symbol_filter = sym
             except Exception:
                 pass
@@ -347,26 +354,12 @@ def main() -> None:
     # Summary metrics
     st.markdown("### Summary Metrics")
     c1, c2, c3 = st.columns(3)
-    direction_col = (
-        filtered["DIRECTION"].fillna("")
-        if "DIRECTION" in filtered.columns
-        else pd.Series(dtype=str)
-    )
     with c1:
-        c1.metric(
-            "Breakouts",
-            int(direction_col.str.contains("BREAKOUT", case=False, na=False).sum()),
-        )
+        c1.metric("Breakouts", int((df_report["DIRECTION"].str.contains("BREAKOUT", case=False, na=False)).sum()))
     with c2:
-        c2.metric(
-            "Breakdowns",
-            int(direction_col.str.contains("BREAKDOWN", case=False, na=False).sum()),
-        )
+        c2.metric("Breakdowns", int((df_report["DIRECTION"].str.contains("BREAKDOWN", case=False, na=False)).sum()))
     with c3:
-        c3.metric(
-            "Alerts",
-            int(direction_col.str.contains("ALERT", case=False, na=False).sum()),
-        )
+        c3.metric("Alerts", int((df_report["DIRECTION"].str.contains("ALERT", case=False, na=False)).sum()))
 
     # Chart for selected symbol with S/R
     if st.session_state.symbol_filter != "All":
